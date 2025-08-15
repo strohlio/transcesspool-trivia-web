@@ -1,160 +1,235 @@
 // pages/index.js
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from "react";
 
-// --- helpers ---
-const normalize = (s = '') => {
-  const x = s.toLowerCase();
-  if (x.includes('matt')) return 'matty';
-  if (x.includes('ariel') || x.includes('chels')) return 'ariel';
-  if (x.includes('adam')) return 'adam';
-  if (x.includes('shaun')) return 'shaun';
-  if (x.includes('ricci')) return 'ricci';
-  if (x.includes('silberg') || x.includes('bird') || x.includes('brad')) return 'brad';
-  if (x.includes('dan')) return 'dan';
-  return x.replaceAll(' ', '');
+const AVATAR_MAP = {
+  dan: "/avatars/dan.jpg",
+  adam: "/avatars/adam.jpg",
+  ariel: "/avatars/ariel.jpg",
+  ricci: "/avatars/ricci.jpg",
+  shaun: "/avatars/shaun.jpg",
+  brad: "/avatars/brad.jpg",
+  matty: "/avatars/matty.jpg",
 };
 
-const label = (id) => {
-  switch (id) {
-    case 'dan':   return 'Dan';
-    case 'adam':  return 'Adam Mandelbaum';
-    case 'ariel': return 'Ariel Shaffir (Chels)';
-    case 'ricci': return 'Ricci Plotkin';
-    case 'shaun': return 'Shaun Plotkin';
-    case 'brad':  return 'Brad Silberg (Bird)';
-    case 'matty': return 'Matthew Jones (Matty)';
-    default:      return id;
-  }
-};
+const FALLBACK_AVATAR = "/avatars/fallback.jpg";
+
+function normalizeId(raw) {
+  const s = raw.toLowerCase();
+  if (s.includes("matt")) return "matty";
+  if (s.includes("ariel") || s.includes("chels")) return "ariel";
+  if (s.includes("adam")) return "adam";
+  if (s.includes("shaun")) return "shaun";
+  if (s.includes("ricci")) return "ricci";
+  if (s.includes("silberg") || s.includes("bird") || s.includes("brad"))
+    return "brad";
+  if (s.includes("dan")) return "dan";
+  return s.replace(/\s+/g, "");
+}
+
+function Option({ label, onClick }) {
+  const id = normalizeId(label);
+  const src = AVATAR_MAP[id] || FALLBACK_AVATAR;
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        gap: 16,
+        padding: 16,
+        borderRadius: 12,
+        border: "1px solid #e5e7eb",
+        background: "white",
+        cursor: "pointer",
+      }}
+    >
+      <img
+        src={src}
+        alt={label}
+        width={48}
+        height={48}
+        style={{ borderRadius: 12, objectFit: "cover" }}
+        onError={(e) => {
+          e.currentTarget.src = FALLBACK_AVATAR;
+        }}
+      />
+      <span>{label}</span>
+    </button>
+  );
+}
 
 export default function Home() {
-  const [questions, setQuestions] = useState([]); // {quote, options[id], answer[id]}[]
-  const [i, setI] = useState(0);
+  const [questions, setQuestions] = useState([]);
+  const [idx, setIdx] = useState(0);
   const [score, setScore] = useState(0);
-  const [done, setDone] = useState(false);
-  const [error, setError] = useState('');
-  const fileRef = useRef(null);
+  const [loadedFrom, setLoadedFrom] = useState(null); // "auto" | "manual" | null
+  const current = questions[idx];
 
-  // --- Auto-load bundled JSON from /public on first load ---
+  // AUTO-LOAD from public/ on first render
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
-        // Make sure your JSON file is at: public/transcesspool_trivia_questions_v2.json
-        const res = await fetch('/transcesspool_trivia_questions_v2.json', { cache: 'no-store' });
-        if (!res.ok) {
-          // No default file found -> keep waiting for manual import
-          return;
-        }
+        const res = await fetch("/transcesspool_trivia_questions_v2.json", {
+          cache: "no-store",
+        });
+        if (!res.ok) return; // don’t blow up if missing while you’re testing
         const data = await res.json();
-        const raw = Array.isArray(data?.questions) ? data.questions : [];
-        const qs = raw.map(q => ({
-          quote: q.quote,
-          options: (q.options || []).map(normalize),
-          answer: normalize(q.answer || '')
-        }));
-        if (qs.length) {
-          setQuestions(qs);
-          setI(0); setScore(0); setDone(false);
+        if (!cancelled && Array.isArray(data?.questions)) {
+          setQuestions(data.questions);
+          setIdx(0);
+          setScore(0);
+          setLoadedFrom("auto");
+          // optional: console.log(`Loaded ${data.questions.length} questions (auto)`);
         }
-      } catch (e) {
-        // Fail quietly; user can still import manually
-        console.warn('Autoload failed:', e);
+      } catch {
+        // ignore — keeps page usable even if file not present yet
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // --- Manual import as fallback / for updates ---
-  const onPickFile = () => fileRef.current?.click();
-  const onFileChange = async (e) => {
-    setError('');
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const importQuestions = async () => {
     try {
+      const [fileHandle] = await window.showOpenFilePicker({
+        multiple: false,
+        types: [{ description: "JSON", accept: { "application/json": [".json"] } }],
+      });
+      const file = await fileHandle.getFile();
       const text = await file.text();
       const data = JSON.parse(text);
-      const raw = Array.isArray(data?.questions) ? data.questions : [];
-      if (!raw.length) throw new Error('No questions[] found in JSON');
-      const qs = raw.map(q => ({
-        quote: q.quote,
-        options: (q.options || []).map(normalize),
-        answer: normalize(q.answer || '')
-      }));
-      setQuestions(qs);
-      setI(0); setScore(0); setDone(false);
-    } catch (err) {
-      setError(err?.message || 'Import failed');
-    } finally {
-      e.target.value = ''; // allow re-import of same file
+      if (Array.isArray(data?.questions)) {
+        setQuestions(data.questions);
+        setIdx(0);
+        setScore(0);
+        setLoadedFrom("manual");
+      } else {
+        alert("That file doesn't look like a questions JSON.");
+      }
+    } catch (e) {
+      // user cancelled or parse error
+      if (e?.name !== "AbortError") {
+        console.error(e);
+        alert("Import failed.");
+      }
     }
   };
 
-  const current = questions[i];
-
-  const choose = (id) => {
+  const choose = (label) => {
     if (!current) return;
-    if (id === current.answer) setScore(s => s + 1);
-    const n = i + 1;
-    if (n >= questions.length) setDone(true);
-    setI(n);
+    const correctId = normalizeId(current.answer);
+    const pickedId = normalizeId(label);
+    if (pickedId === correctId) setScore((s) => s + 1);
+    setIdx((i) => i + 1);
+  };
+
+  const reset = () => {
+    setIdx(0);
+    setScore(0);
   };
 
   return (
-    <div className="container">
-      <h1>TRANScesspool Trivia</h1>
-      {questions.length
-        ? <p className="muted">{questions.length} questions ready</p>
-        : <p className="muted">Import the questions JSON to get started.</p>}
+    <div
+      style={{
+        maxWidth: 900,
+        margin: "0 auto",
+        padding: 24,
+        fontFamily:
+          '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"',
+      }}
+    >
+      <h1 style={{ fontSize: 40, fontWeight: 800, marginBottom: 12 }}>
+        TRANScesspool Trivia
+      </h1>
 
-      <div className="row" style={{ marginBottom: 16 }}>
-        <button className="btn btn primary" onClick={onPickFile}>Import Questions JSON</button>
-        <input ref={fileRef} type="file" accept="application/json" onChange={onFileChange} style={{ display: 'none' }} />
+      <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+        <div style={{ color: "#374151" }}>
+          {questions.length > 0
+            ? `${questions.length} questions ready`
+            : "No questions loaded"}
+          {loadedFrom ? ` • ${loadedFrom}` : ""}
+        </div>
+
+        <button
+          onClick={importQuestions}
+          style={{
+            padding: "10px 16px",
+            borderRadius: 10,
+            background: "#2563eb",
+            color: "white",
+            border: 0,
+            cursor: "pointer",
+          }}
+        >
+          Import Questions JSON
+        </button>
       </div>
 
-      {error && (
-        <div className="card" style={{ borderColor: '#fecaca', background: '#fff1f2', color: '#991b1b' }}>
-          {error}
-        </div>
-      )}
+      <div style={{ marginTop: 16, color: "#111827" }}>Score: {score}</div>
+      <div style={{ float: "right", color: "#4b5563" }}>
+        {questions.length > 0 ? `Q ${Math.min(idx + 1, questions.length)} / ${questions.length}` : ""}
+      </div>
 
-      {!questions.length && (
-        <div className="card">Waiting for questions…</div>
-      )}
-
-      {!!questions.length && !done && (
-        <div className="grid">
-          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-            <div><strong>Score:</strong> {score}</div>
-            <div>Q {Math.min(i + 1, questions.length)} / {questions.length}</div>
+      <div
+        style={{
+          clear: "both",
+          marginTop: 24,
+          padding: 24,
+          border: "1px solid #e5e7eb",
+          borderRadius: 16,
+          background: "#fafafa",
+        }}
+      >
+        {questions.length === 0 ? (
+          <div style={{ color: "#6b7280" }}>
+            Drop your JSON in <code>/public/transcesspool_trivia_questions_v2.json</code>{" "}
+            (or use Import).
           </div>
+        ) : idx >= questions.length ? (
+          <div style={{ textAlign: "center" }}>
+            <h2 style={{ fontSize: 28, marginBottom: 8 }}>Game over</h2>
+            <div style={{ marginBottom: 16 }}>
+              You scored <strong>{score}</strong> / {questions.length}.
+            </div>
+            <button
+              onClick={reset}
+              style={{
+                padding: "10px 16px",
+                borderRadius: 10,
+                background: "#2563eb",
+                color: "white",
+                border: 0,
+                cursor: "pointer",
+              }}
+            >
+              Play Again
+            </button>
+          </div>
+        ) : (
+          <>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Who said:</div>
+            <div
+              style={{
+                textAlign: "center",
+                fontStyle: "italic",
+                color: "#111827",
+                marginBottom: 16,
+              }}
+            >
+              “{questions[idx].quote}”
+            </div>
 
-          <div className="card">
-            <h3 style={{ marginTop: 0 }}>Who said:</h3>
-            <p className="quote">“{current?.quote}”</p>
-
-            <div className="grid">
-              {current?.options.map(pid => (
-                <button key={pid} className="option" onClick={() => choose(pid)}>
-                  <img
-                    className="avatar"
-                    src={`/avatars/${pid}.jpg`}
-                    alt={label(pid)}
-                    onError={(e) => { e.currentTarget.src = '/avatars/fallback.jpg'; }}
-                  />
-                  <span className="label">{label(pid)}</span>
-                </button>
+            <div style={{ display: "grid", gap: 12 }}>
+              {questions[idx].options.map((opt) => (
+                <Option key={opt} label={opt} onClick={() => choose(opt)} />
               ))}
             </div>
-          </div>
-        </div>
-      )}
-
-      {done && (
-        <div className="card">
-          <h2>Game over</h2>
-          <p>You scored {score}/{questions.length}.</p>
-          <button className="btn" onClick={() => { setI(0); setScore(0); setDone(false); }}>Play again</button>
-        </div>
-      )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
